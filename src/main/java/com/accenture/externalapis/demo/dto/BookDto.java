@@ -5,7 +5,9 @@ package com.accenture.externalapis.demo.dto;
 // service, which you define yourself using Swagger UI) - notice this DTO
 // does not keep every field. Decide what you truly need.
 public record BookDto(String title,
-                       String author,
-                       String genre,
-                       double price) {
+                      String author,
+                      String genre,
+                      double price,
+                      String isbn,
+                      Integer publishedYear) {
 }

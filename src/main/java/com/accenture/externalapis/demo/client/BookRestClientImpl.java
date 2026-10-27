@@ -1,32 +1,105 @@
 package com.accenture.externalapis.demo.client;
 
 import com.accenture.externalapis.demo.config.ExternalServiceProperties;
+import com.accenture.externalapis.demo.dto.BookApiResponse;
+import com.accenture.externalapis.demo.dto.BookDto;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.UnknownContentTypeException;
 
-// TODO: Make this class implement BookRestClient.
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
+
 @Component
-public class BookRestClientImpl {
+public class BookRestClientImpl implements BookRestClient {
 
-    private RestClient restClient;
+    private final RestClient restClient;
 
     public BookRestClientImpl(RestClient.Builder builder, ExternalServiceProperties properties) {
-        // TODO: Build the RestClient using builder.baseUrl(properties.baseUrl()).build()
-        // and assign it to this.restClient
-        //
-        // Optional/bonus: this service doesn't require auth, but in a real API you would
-        // often also add builder.defaultHeader("Authorization", "Bearer " + token) here.
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setReadTimeout(Duration.ofSeconds(5));
+        factory.setConnectTimeout(Duration.ofSeconds(5));
+
+        this.restClient = builder
+                .baseUrl(properties.baseUrl())
+                .requestFactory(factory)
+                .build();
     }
 
-    // TODO: Implement getBook(Long id) - fetch one book from GET /books/{id} as a
-    // BookApiResponse, then map it onto a BookDto (only keep the fields BookDto needs).
-    //
-    // TODO: Handle the main RestClient error cases and rethrow them as ClientException:
-    //  - HttpClientErrorException (4xx, e.g. book not found)
-    //  - HttpServerErrorException (5xx, e.g. the faulty/teapot book)
-    //  - ResourceAccessException (connection refused / timeout - the external service is unreachable)
+    @Override
+    public BookDto getBook(Long id) {
+        try {
+            BookApiResponse response = restClient.get()
+                    .uri("/books/{id}", id)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
+                        if (res.getStatusCode().value() == 404) {
+                            throw new ClientException("Book with id: " + id + " not found");
+                        }
+                        throw new ClientException("External API client error: " + res.getStatusCode());
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
+                        throw new ClientException("External API server error: " + res.getStatusCode());
+                    })
+                    .body(BookApiResponse.class);
 
-    // TODO: Implement getAllBooks() - fetch all books from GET /books as
-    // BookApiResponse[], then map each one onto a BookDto. Handle the same error
-    // cases as getBook() above.
+            if (response == null) {
+                throw new ClientException("External API returned an empty response");
+            }
+
+            return new BookDto(response.title(),
+                    response.author(),
+                    response.genre(),
+                    response.price(),
+                    response.isbn(),
+                    response.publishedYear()
+            );
+        } catch (ResourceAccessException e) {
+            throw new ClientException("External API connection failed or timed out", e);
+        } catch (UnknownContentTypeException e) {
+            throw new ClientException("External API returned an unsupported content type", e);
+        } catch (RestClientException e) {
+            throw new ClientException("External API returned an invalid response", e);
+        }
+    }
+
+    @Override
+    public List<BookDto> getAllBooks() {
+        try {
+            BookApiResponse[] response = restClient.get()
+                    .uri("/books")
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
+                        throw new ClientException("External API client error: " + res.getStatusCode());
+                    })
+                    .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
+                        throw new ClientException("External API server error: " + res.getStatusCode());
+                    })
+                    .body(BookApiResponse[].class);
+
+            if (response == null) {
+                throw new ClientException("External API returned an empty response");
+            }
+
+            return Arrays.stream(response)
+                    .map(book -> new BookDto(
+                            book.title(),
+                            book.author(),
+                            book.genre(),
+                            book.price(),
+                            book.isbn(),
+                            book.publishedYear()
+                    ))
+                    .toList();
+        } catch (ResourceAccessException e) {
+            throw new ClientException("External API connection failed or timed out", e);
+        } catch (UnknownContentTypeException e) {
+            throw new ClientException("External API returned an unsupported content type", e);
+        }
+    }
 }
